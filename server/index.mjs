@@ -69,6 +69,14 @@ function extractOutputText(response) {
   return chunks.join('\n');
 }
 
+const AI_PLAYER_PROMPT = `You are a poker player agent in a Texas Hold'em learning app. You play like a believable human — not perfectly, not randomly. You are governed by profile attributes in the payload: stack_size, aggression (0-10), loss_aversion (0-10), bluff_index (0-10), position, and recent_history. Play a plausible range for your position. Occasionally make a slightly irrational call (roughly 1 in 8 decisions). If loss_aversion > 6 and recent_history shows heavy losses, reduce aggression. Never announce hidden cards or strategy. Choose one legal action from the payload view.`;
+
+const ASSISTANT_PROMPT = `You do not speak first. You wait until the player asks during their turn. You can only see the human player's hole cards, community cards, pot size, current bet, and player stack. You cannot see opponent hole cards. Help with pot odds, equity estimates, fold/call/raise suggestions, and danger flags. Only respond when asked. 1-3 sentences max. Never be definitive. Format: [ASSISTANT]: <response>`;
+
+const COACH_REVIEW_PROMPT = `You are a professional poker coach. You only speak after a street or hand has completed — never during an active hand. You have full visibility into all players' hole cards, actions, pot sizes, and community cards. When reviewing: cover what the human did, what they should consider differently, and one opponent read. Format opening reviews as [PRO COACH – STREET]: and follow-ups as [PRO COACH]:`;
+
+const SESSION_REPORT_PROMPT = `You write end-of-session poker learning summaries covering what the player did well, what to work on, and three specific spots to review. Keep it under 200 words.`;
+
 function schemaForTask(task) {
   if (task === 'ai_decision') {
     return {
@@ -116,6 +124,34 @@ function schemaForTask(task) {
     };
   }
 
+  if (task === 'assistant_chat' || task === 'coach_review' || task === 'coach_chat') {
+    return {
+      name: `${task}_response`,
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['reply'],
+        properties: {
+          reply: { type: 'string' },
+        },
+      },
+    };
+  }
+
+  if (task === 'session_report') {
+    return {
+      name: 'session_report',
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['summary'],
+        properties: {
+          summary: { type: 'string' },
+        },
+      },
+    };
+  }
+
   return {
     name: 'hand_report',
     schema: {
@@ -134,15 +170,9 @@ function schemaForTask(task) {
   };
 }
 
-function systemPrompt(task) {
+function systemPrompt(task, payload = {}) {
   if (task === 'ai_decision') {
-    return [
-      'You are a Texas Holdem player agent.',
-      'Use only the scoped observation supplied in the payload.',
-      'Choose one legal action from the payload and give a concise rationale.',
-      'Return thinkingProcess as 2-4 concise public reasoning summary steps, not hidden chain-of-thought.',
-      'Do not mention hidden cards you were not given.',
-    ].join(' ');
+    return AI_PLAYER_PROMPT;
   }
 
   if (task === 'coach_advice') {
@@ -154,6 +184,18 @@ function systemPrompt(task) {
     ].join(' ');
   }
 
+  if (task === 'assistant_chat') {
+    return payload.system ?? ASSISTANT_PROMPT;
+  }
+
+  if (task === 'coach_review' || task === 'coach_chat') {
+    return payload.system ?? COACH_REVIEW_PROMPT;
+  }
+
+  if (task === 'session_report') {
+    return SESSION_REPORT_PROMPT;
+  }
+
   return [
     'You are a poker report agent.',
     'You may use the complete post-hand history, records, and decision traces supplied.',
@@ -161,6 +203,41 @@ function systemPrompt(task) {
     'Return thinkingProcess as 2-5 concise public reasoning summary steps, not hidden chain-of-thought.',
   ].join(' ');
 }
+
+function buildInput(task, payload) {
+  if (task === 'coach_review') {
+    return [
+      { role: 'system', content: systemPrompt(task, payload) },
+      { role: 'user', content: payload.userMessage ?? JSON.stringify(payload) },
+    ];
+  }
+
+  if (task === 'assistant_chat' || task === 'coach_chat') {
+    const messages = payload.messages ?? [];
+    return [
+      { role: 'system', content: systemPrompt(task, payload) },
+      ...messages.map((message) => ({
+        role: message.role,
+        content: message.content,
+      })),
+    ];
+  }
+
+  return [
+    { role: 'system', content: systemPrompt(task, payload) },
+    { role: 'user', content: JSON.stringify(payload) },
+  ];
+}
+
+const ALLOWED_TASKS = [
+  'ai_decision',
+  'coach_advice',
+  'hand_report',
+  'assistant_chat',
+  'coach_review',
+  'coach_chat',
+  'session_report',
+];
 
 async function callOpenAI(task, payload) {
   if (!process.env.OPENAI_API_KEY) {
@@ -180,10 +257,7 @@ async function callOpenAI(task, payload) {
     },
     body: JSON.stringify({
       model: MODEL,
-      input: [
-        { role: 'system', content: systemPrompt(task) },
-        { role: 'user', content: JSON.stringify(payload) },
-      ],
+      input: buildInput(task, payload),
       text: {
         format: {
           type: 'json_schema',
@@ -236,7 +310,7 @@ createServer(async (req, res) => {
   if (req.url === '/api/agent' && req.method === 'POST') {
     try {
       const body = await readJson(req);
-      if (!['ai_decision', 'coach_advice', 'hand_report'].includes(body.task)) {
+      if (!ALLOWED_TASKS.includes(body.task)) {
         sendJson(res, 400, { ok: false, error: 'Unknown agent task.' });
         return;
       }

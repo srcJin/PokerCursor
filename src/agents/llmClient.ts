@@ -1,14 +1,30 @@
 import {
   buildAIDecisionTrace,
+  getAgentProfile,
   type AIDecision,
   type AIDecisionResult,
   summarizeObservation,
 } from './aiPlayer';
+import {
+  ASSISTANT_IDLE_RESPONSE,
+  buildAssistantPayload,
+  formatAssistantReply,
+  gateAssistantMessage,
+} from './assistant';
+import {
+  CoachReview,
+  formatCoachChatReply,
+  formatCoachReviewReply,
+  gateCoachReview,
+} from './coachReview';
 import type {
+  ActionLogEntry,
   AgentMemorySnapshot,
+  ChatMessage,
   CoachAdvice,
   HandReport,
   PlayerRecord,
+  Street,
   TableView,
 } from '../types/game';
 
@@ -44,6 +60,7 @@ export async function requestAIDecision(
   memory: AgentMemorySnapshot,
   fallback: AIDecisionResult,
 ): Promise<AIDecisionResult> {
+  const profile = getAgentProfile(seat, view, memory);
   const result = await callLLM<{
     action: string;
     betSize: number | null;
@@ -53,6 +70,7 @@ export async function requestAIDecision(
     seat,
     view,
     memory,
+    profile,
   });
 
   if (!result || !view.legalActions.includes(result.action as AIDecision['action'])) {
@@ -131,3 +149,81 @@ export async function requestHandReport(
       : localReport.thinkingProcess,
   };
 }
+
+export async function requestAssistantChat(
+  view: TableView,
+  userMessage: string,
+  history: ChatMessage[],
+): Promise<string> {
+  const gate = gateAssistantMessage(view, userMessage);
+  if (!gate.allowed) {
+    return gate.reply;
+  }
+
+  const payload = buildAssistantPayload(view, gate.userMessage, history);
+  const result = await callLLM<{ reply: string }>('assistant_chat', payload);
+  if (!result?.reply) {
+    return formatAssistantReply(
+      'Consider pot odds against your draw or made hand strength before continuing.',
+    );
+  }
+  return formatAssistantReply(result.reply);
+}
+
+export async function requestCoachStreetReview(
+  coach: CoachReview,
+  view: TableView,
+  actionLog: ActionLogEntry[],
+  street: Street | null,
+): Promise<string> {
+  const gate = gateCoachReview(view);
+  if (!gate.allowed) {
+    return gate.reply;
+  }
+
+  const request = coach.buildReviewRequest(view, actionLog, street);
+  const result = await callLLM<{ reply: string }>('coach_review', request);
+  const reply = formatCoachReviewReply(
+    result?.reply ?? 'Review the pot odds and position on each street before acting.',
+    street,
+  );
+  coach.recordReview(reply);
+  return reply;
+}
+
+export async function requestCoachFollowUp(
+  coach: CoachReview,
+  view: TableView,
+  actionLog: ActionLogEntry[],
+  userMessage: string,
+  conversationHistory: ChatMessage[],
+): Promise<string> {
+  const gate = gateCoachReview(view);
+  if (!gate.allowed) {
+    coach.recordChat(userMessage, gate.reply);
+    return gate.reply;
+  }
+
+  const request = coach.buildChatRequest(view, actionLog, userMessage, conversationHistory);
+  const result = await callLLM<{ reply: string }>('coach_chat', request);
+  const reply = formatCoachChatReply(
+    result?.reply ?? 'Focus on how your line interacted with the board texture and bet sizing.',
+  );
+  coach.recordChat(userMessage, reply);
+  return reply;
+}
+
+export async function requestSessionReport(
+  view: TableView,
+  actionLog: ActionLogEntry[],
+  handLog: string[],
+): Promise<string> {
+  const result = await callLLM<{ summary: string }>('session_report', {
+    view,
+    actionLog,
+    handLog,
+  });
+  return result?.summary ?? 'Keep reviewing aggressive spots and fold discipline between sessions.';
+}
+
+export { ASSISTANT_IDLE_RESPONSE };

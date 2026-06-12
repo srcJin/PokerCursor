@@ -7,13 +7,21 @@ interface ActionBarProps {
   view: TableView;
   onAction: (action: Action, betSize?: number) => void;
   onAskCoach: () => void;
+  onAskAssistant: (message: string) => Promise<string>;
   disabled?: boolean;
 }
 
-export function ActionBar({ view, onAction, onAskCoach, disabled }: ActionBarProps) {
+export function ActionBar({
+  view,
+  onAction,
+  onAskCoach,
+  onAskAssistant,
+  disabled,
+}: ActionBarProps) {
   const [raiseAmount, setRaiseAmount] = useState(
     view.chipRange?.min ?? view.chipRange?.max ?? 4,
   );
+  const [assistantPrompt, setAssistantPrompt] = useState('What are my pot odds?');
 
   const canRaise =
     view.legalActions.includes('raise') || view.legalActions.includes('bet');
@@ -24,8 +32,24 @@ export function ActionBar({ view, onAction, onAskCoach, disabled }: ActionBarPro
   return (
     <div className="action-bar">
       <button type="button" className="btn btn--coach" onClick={onAskCoach} disabled={disabled}>
-        Ask Coach
+        Quick Hint
       </button>
+      <div className="action-bar__assistant">
+        <input
+          type="text"
+          value={assistantPrompt}
+          onChange={(event) => setAssistantPrompt(event.target.value)}
+          disabled={disabled}
+        />
+        <button
+          type="button"
+          className="btn btn--primary"
+          onClick={() => void onAskAssistant(assistantPrompt)}
+          disabled={disabled}
+        >
+          Ask Assistant
+        </button>
+      </div>
 
       <div className="action-bar__actions">
         {view.legalActions.includes('fold') && (

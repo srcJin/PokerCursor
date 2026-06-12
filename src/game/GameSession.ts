@@ -2,7 +2,7 @@ import type { Action } from '../types/poker';
 import PokerTable from './pokerTable';
 
 import { pickAIAction, type AIDecisionResult } from '../agents/aiPlayer';
-import { endHand, startNewHand } from '../agents/dealer';
+import { dealerTimers, endHand, formatDealerMessage, startNewHand } from '../agents/dealer';
 import { AgentMemoryManager } from '../agents/memory';
 import { buildHandReport } from '../agents/report';
 import type {
@@ -51,8 +51,10 @@ export class GameSession {
   private completedHandView: TableView | null = null;
   private memory = new AgentMemoryManager();
   private records = new Map<number, PlayerRecord>();
+  private readonly fastMode: boolean;
 
-  constructor(savedRecords: PlayerRecord[] = []) {
+  constructor(savedRecords: PlayerRecord[] = [], fastMode = import.meta.env.MODE === 'test') {
+    this.fastMode = fastMode;
     this.table = new PokerTable({ smallBlind: 1, bigBlind: 2 }, TABLE_SEATS);
     for (const seat of ACTIVE_SEATS) {
       const saved = savedRecords.find((record) => record.seat === seat);
@@ -95,7 +97,7 @@ export class GameSession {
     this.recordAgentTrace(
       'dealer',
       undefined,
-      'Started a new hand using only public table state.',
+      formatDealerMessage('Button rotated. Hole cards dealt. Blinds posted.'),
       this.getScopedView('dealer'),
     );
   }
@@ -213,6 +215,10 @@ export class GameSession {
         const seat = this.table.playerToAct();
         if (seat === HUMAN_SEAT) {
           return 'human_turn';
+        }
+
+        if (!this.fastMode) {
+          await dealerTimers.delay(dealerTimers.randomAgentDelay());
         }
 
         const view = this.getScopedView(this.agentIdForSeat(seat), seat);

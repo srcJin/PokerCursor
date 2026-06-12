@@ -4,7 +4,12 @@ import {
   AI_CONSERVATIVE_SEAT,
   HUMAN_SEAT,
 } from '../game/constants';
-import type { AgentDecisionTrace, AgentMemorySnapshot, TableView } from '../types/game';
+import type {
+  AgentDecisionTrace,
+  AgentMemorySnapshot,
+  AgentProfile,
+  TableView,
+} from '../types/game';
 
 export interface AIDecision {
   action: Action;
@@ -21,6 +26,63 @@ export interface AIDecisionResult {
 
 type Position = 'button' | 'small_blind' | 'big_blind';
 
+const AI_PROFILES: Record<number, AgentProfile> = {
+  [AI_AGGRESSIVE_SEAT]: {
+    stackSize: 100,
+    aggression: 8,
+    lossAversion: 3,
+    bluffIndex: 6,
+    position: 'late',
+    recentHistory: 'Won last two pots with aggressive raises.',
+  },
+  [AI_CONSERVATIVE_SEAT]: {
+    stackSize: 100,
+    aggression: 2,
+    lossAversion: 8,
+    bluffIndex: 1,
+    position: 'early',
+    recentHistory: 'Folded several hands after early losses.',
+  },
+};
+
+export function getAgentProfile(
+  seat: number,
+  view: TableView,
+  memory: AgentMemorySnapshot,
+): AgentProfile {
+  const base = AI_PROFILES[seat] ?? {
+    stackSize: 100,
+    aggression: 5,
+    lossAversion: 5,
+    bluffIndex: 3,
+    position: 'middle' as const,
+    recentHistory: 'No notable recent history.',
+  };
+  const player = view.seats.find((item) => item.seat === seat);
+  const button = view.seats.find((item) => item.isButton)?.seat ?? HUMAN_SEAT;
+  const tablePosition = getPosition(seat, button, [
+    HUMAN_SEAT,
+    AI_AGGRESSIVE_SEAT,
+    AI_CONSERVATIVE_SEAT,
+  ]);
+
+  const positionMap: Record<Position, AgentProfile['position']> = {
+    button: 'late',
+    small_blind: 'blinds',
+    big_blind: 'blinds',
+  };
+
+  const recentNet = memory.shortTerm.slice(-2).join(' ');
+  const recentHistory = recentNet || base.recentHistory;
+
+  return {
+    ...base,
+    stackSize: player?.stack ?? base.stackSize,
+    position: positionMap[tablePosition],
+    recentHistory,
+  };
+}
+
 function getPosition(seat: number, button: number, activeSeats: number[]): Position {
   const ordered = [...activeSeats].sort((a, b) => a - b);
   const buttonIdx = ordered.indexOf(button);
@@ -32,6 +94,10 @@ function getPosition(seat: number, button: number, activeSeats: number[]): Posit
 }
 
 function handStrength(holeCards: string[]): number {
+  if (holeCards.length < 2) {
+    return 0;
+  }
+
   const ranks = holeCards.map((c) => c[0]);
   const suited = holeCards[0][1] === holeCards[1][1];
   const rankValues: Record<string, number> = {
