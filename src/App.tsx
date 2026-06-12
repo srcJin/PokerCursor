@@ -87,7 +87,7 @@ function App() {
         )}
 
         {activeView === 'table' && view && phase !== 'lobby' && (
-          <>
+          <div className="table-col">
             {isThinking && <div className="thinking-banner">Agents are thinking...</div>}
             <PokerTable view={view} />
 
@@ -110,7 +110,7 @@ function App() {
                 Winner: {view.winners.map((w) => `${w.label} (${w.handName})`).join(', ')}
               </div>
             )}
-          </>
+          </div>
         )}
 
         {activeView === 'table' && (

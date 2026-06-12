@@ -48,8 +48,7 @@ export class DealerTimers {
   }
 
   startAgentTimer(callback: () => void): TimerHandle {
-    const delay = 3_000 + Math.floor(Math.random() * 27_001);
-    const timerId = schedule(callback, delay);
+    const timerId = schedule(callback, this.randomAgentDelay());
 
     return {
       clear: () => {
@@ -65,7 +64,9 @@ export class DealerTimers {
   }
 
   randomAgentDelay(): number {
-    return 3_000 + Math.floor(Math.random() * 27_001);
+    // Short "thinking" pause for table feel; the LLM round-trip already
+    // adds a few seconds of real latency on top.
+    return 500 + Math.floor(Math.random() * 1_001);
   }
 }
 

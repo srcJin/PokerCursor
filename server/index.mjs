@@ -23,7 +23,19 @@ loadDotEnv();
 const PORT = Number(process.env.PORT ?? 8787);
 const HOST = process.env.HOST ?? '127.0.0.1';
 const MODEL = process.env.OPENAI_MODEL ?? 'gpt-5-mini';
+const REASONING_EFFORT = process.env.OPENAI_REASONING_EFFORT ?? 'minimal';
 const DIST_DIR = join(process.cwd(), 'dist');
+
+// In-game tasks need snappy turns; post-hand analysis can afford more thought.
+const TASK_EFFORT = {
+  ai_decision: REASONING_EFFORT,
+  coach_advice: REASONING_EFFORT,
+  assistant_chat: REASONING_EFFORT,
+  coach_chat: REASONING_EFFORT,
+  coach_review: 'low',
+  hand_report: 'low',
+  session_report: 'low',
+};
 
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
@@ -257,6 +269,7 @@ async function callOpenAI(task, payload) {
     },
     body: JSON.stringify({
       model: MODEL,
+      reasoning: { effort: TASK_EFFORT[task] ?? REASONING_EFFORT },
       input: buildInput(task, payload),
       text: {
         format: {

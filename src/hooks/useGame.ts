@@ -63,6 +63,7 @@ export function useGame() {
 
   const coachReviewRef = useRef(new CoachReview());
   const playerTimerRef = useRef<TimerHandle | null>(null);
+  const reportSeqRef = useRef(0);
   const refresh = useCallback(() => setTick((n) => n + 1), []);
 
   const clearPlayerTimer = useCallback(() => {
@@ -93,12 +94,7 @@ export function useGame() {
   const completeHand = useCallback(async (nextSession: GameSession) => {
     const localReport = nextSession.finalizeHandReport();
     const records = nextSession.getPlayerRecords();
-    const report = await requestHandReport(
-      localReport,
-      records,
-      nextSession.getDecisionTraces(),
-    );
-    setHandReport(report);
+    setHandReport(localReport);
     setSavedRecords(records);
     saveRecords(records);
     setHandLog((log) => [
@@ -110,6 +106,19 @@ export function useGame() {
     setPhase('hand_complete');
     clearPlayerTimer();
     setClockWarning(null);
+
+    // Upgrade to the LLM-written report in the background; drop the result
+    // if a new hand has started in the meantime.
+    const seq = reportSeqRef.current;
+    void requestHandReport(
+      localReport,
+      records,
+      nextSession.getDecisionTraces(),
+    ).then((report) => {
+      if (reportSeqRef.current === seq && report !== localReport) {
+        setHandReport(report);
+      }
+    });
   }, [clearPlayerTimer]);
 
   const startPlayerClock = useCallback((activeSession: GameSession) => {
@@ -137,6 +146,7 @@ export function useGame() {
   }, [clearPlayerTimer, completeHand, refresh]);
 
   const startHandFlow = useCallback(async (next: GameSession) => {
+    reportSeqRef.current += 1;
     setAssistantHistory([]);
     setCoachAdvice(null);
     setCoachFeedback(null);
@@ -156,12 +166,15 @@ export function useGame() {
 
   const startGame = useCallback(async () => {
     setIsThinking(true);
-    coachReviewRef.current.resetChatHistory();
-    setCoachHistory([]);
-    const next = new GameSession(savedRecords);
-    next.startHand();
-    await startHandFlow(next);
-    setIsThinking(false);
+    try {
+      coachReviewRef.current.resetChatHistory();
+      setCoachHistory([]);
+      const next = new GameSession(savedRecords);
+      next.startHand();
+      await startHandFlow(next);
+    } finally {
+      setIsThinking(false);
+    }
   }, [savedRecords, startHandFlow]);
 
   const askCoach = useCallback(async () => {
@@ -238,20 +251,23 @@ export function useGame() {
       if (!session || !view?.humanToAct) return;
 
       setIsThinking(true);
-      clearPlayerTimer();
-      setClockWarning(null);
-      const feedback = getCoachFeedback(action, view);
-      setCoachFeedback(feedback);
-      setCoachAdvice(null);
-      session.act(HUMAN_SEAT, action, betSize, feedback);
-      const result = await session.advanceUntilHumanOrComplete(requestAIDecision);
-      if (result === 'hand_complete') {
-        await completeHand(session);
-      } else if (result === 'human_turn') {
-        startPlayerClock(session);
+      try {
+        clearPlayerTimer();
+        setClockWarning(null);
+        const feedback = getCoachFeedback(action, view);
+        setCoachFeedback(feedback);
+        setCoachAdvice(null);
+        session.act(HUMAN_SEAT, action, betSize, feedback);
+        const result = await session.advanceUntilHumanOrComplete(requestAIDecision);
+        if (result === 'hand_complete') {
+          await completeHand(session);
+        } else if (result === 'human_turn') {
+          startPlayerClock(session);
+        }
+      } finally {
+        setIsThinking(false);
+        refresh();
       }
-      setIsThinking(false);
-      refresh();
     },
     [clearPlayerTimer, completeHand, session, startPlayerClock, view, refresh],
   );
@@ -259,11 +275,14 @@ export function useGame() {
   const nextHand = useCallback(async () => {
     if (!session) return;
     setIsThinking(true);
-    coachReviewRef.current.resetChatHistory();
-    setCoachHistory([]);
-    session.startHand();
-    await startHandFlow(session);
-    setIsThinking(false);
+    try {
+      coachReviewRef.current.resetChatHistory();
+      setCoachHistory([]);
+      session.startHand();
+      await startHandFlow(session);
+    } finally {
+      setIsThinking(false);
+    }
   }, [session, startHandFlow]);
 
   useEffect(() => () => clearPlayerTimer(), [clearPlayerTimer]);

@@ -34,12 +34,18 @@ interface LLMResponse<T> {
   error?: string;
 }
 
-async function callLLM<T>(task: string, payload: unknown): Promise<T | null> {
+// Past this point we abandon the LLM and use the local heuristic fallback
+// so the table never stalls on a slow upstream call.
+const DEFAULT_TIMEOUT_MS = 15_000;
+const REPORT_TIMEOUT_MS = 30_000;
+
+async function callLLM<T>(task: string, payload: unknown, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T | null> {
   try {
     const response = await fetch('/api/agent', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ task, payload }),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     const data = await response.json() as LLMResponse<T>;
@@ -130,7 +136,7 @@ export async function requestHandReport(
     localReport,
     records,
     traces,
-  });
+  }, REPORT_TIMEOUT_MS);
 
   if (!result) {
     return localReport;
@@ -222,7 +228,7 @@ export async function requestSessionReport(
     view,
     actionLog,
     handLog,
-  });
+  }, REPORT_TIMEOUT_MS);
   return result?.summary ?? 'Keep reviewing aggressive spots and fold discipline between sessions.';
 }
 

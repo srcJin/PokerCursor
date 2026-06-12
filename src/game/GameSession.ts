@@ -51,6 +51,9 @@ export class GameSession {
   private completedHandView: TableView | null = null;
   private memory = new AgentMemoryManager();
   private records = new Map<number, PlayerRecord>();
+  // poker-ts forbids reading pots() once the hand ends, so keep the last
+  // in-progress snapshot for uncontested-winner resolution.
+  private lastPots: { size: number; eligiblePlayers: number[] }[] = [];
   private readonly fastMode: boolean;
 
   constructor(savedRecords: PlayerRecord[] = [], fastMode = import.meta.env.MODE === 'test') {
@@ -217,14 +220,18 @@ export class GameSession {
           return 'human_turn';
         }
 
-        if (!this.fastMode) {
+        // Once the human is out of the hand, fast-forward the AI-only
+        // playout with local heuristics instead of paced LLM turns.
+        const humanInHand = this.table.handPlayers()[HUMAN_SEAT] !== null;
+
+        if (!this.fastMode && humanInHand) {
           await dealerTimers.delay(dealerTimers.randomAgentDelay());
         }
 
         const view = this.getScopedView(this.agentIdForSeat(seat), seat);
         const memory = this.memory.getSnapshot(this.agentIdForSeat(seat));
         const fallback = pickAIAction(seat, view, memory);
-        const { decision, trace } = decideAI
+        const { decision, trace } = decideAI && humanInHand
           ? await decideAI(seat, view, memory, fallback)
           : fallback;
       this.decisionTraces.push(trace);
@@ -256,6 +263,7 @@ export class GameSession {
 
   private finishHand(runShowdown: boolean): void {
     const snapshot = this.captureTableView();
+    this.lastPots = this.table.isHandInProgress() ? this.table.pots() : this.lastPots;
     if (runShowdown) {
       endHand(this.table);
     }
@@ -290,7 +298,7 @@ export class GameSession {
     const handInProgress = this.table.isHandInProgress();
     const street = handInProgress ? this.table.roundOfBetting() : null;
     const button = handInProgress ? this.table.button() : -1;
-    const holeCards = this.table.holeCards();
+    const holeCards = handInProgress ? this.table.holeCards() : [];
 
     const seats: SeatView[] = Array.from({ length: TABLE_SEATS }, (_, seat) => {
       const config = SEAT_CONFIG[seat];
@@ -327,9 +335,9 @@ export class GameSession {
     return {
       handInProgress: true,
       street,
-      communityCards: cardsToShort(this.table.communityCards()),
+      communityCards: handInProgress ? cardsToShort(this.table.communityCards()) : [],
       seats,
-      pots: this.table.pots(),
+      pots: handInProgress ? this.table.pots() : [...this.lastPots],
       humanToAct: false,
       legalActions: [],
       winners: null,
@@ -337,13 +345,15 @@ export class GameSession {
   }
 
   private hasShowdownCards(): boolean {
+    if (!this.table.isHandInProgress()) return false;
     return this.table.holeCards().some((cards: unknown) => cards !== null);
   }
 
   private getWinners(): WinnerView[] | null {
-    const winners = this.table.winners();
+    const handInProgress = this.table.isHandInProgress();
+    const winners = handInProgress ? [] : this.table.winners();
     if (!winners.length) {
-      const pots = this.table.pots();
+      const pots = handInProgress ? this.table.pots() : this.lastPots;
       if (pots.length === 1 && pots[0].eligiblePlayers.length === 1) {
         const seat = pots[0].eligiblePlayers[0];
         return [
