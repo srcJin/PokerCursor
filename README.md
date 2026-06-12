@@ -50,6 +50,29 @@ agent logic so the demo remains playable.
 Agent traces record public reasoning summaries returned by the model; raw hidden
 chain-of-thought is not requested or displayed.
 
+## Deploy on Render
+
+Render can host the frontend and backend together. The Node server serves the Vite
+`dist/` output and handles `/api/agent`.
+
+Use the committed `render.yaml` Blueprint, or configure a Render Web Service with:
+
+```bash
+Build Command: npm ci && npm run build
+Start Command: npm run start
+```
+
+Set these Render environment variables:
+
+```bash
+NODE_ENV=production
+HOST=0.0.0.0
+OPENAI_MODEL=gpt-5-mini
+OPENAI_API_KEY=<your key>
+```
+
+Do not upload `.env`; keep secrets in Render's environment settings.
+
 ## Next steps (hackathon)
 
 - Add action history replay UI
