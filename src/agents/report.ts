@@ -103,3 +103,5 @@ export function buildHandReport(
     thinkingProcess,
   };
 }
+
+export { requestSessionReport as generateReport } from './llmClient';

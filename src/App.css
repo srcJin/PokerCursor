@@ -654,3 +654,62 @@
 .sparkline__bar--down {
   background: #d86b6b;
 }
+
+.assistant-panel,
+.coach-review-panel {
+  background: #1a2332;
+  border: 1px solid #2d3d52;
+  border-radius: 10px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.assistant-panel__hint,
+.coach-review-panel__hint,
+.assistant-panel__empty,
+.coach-review-panel__empty {
+  color: #8a9aaa;
+  font-size: 0.82rem;
+}
+
+.assistant-panel__warning {
+  color: #f0c674;
+  font-size: 0.82rem;
+}
+
+.assistant-panel__chat,
+.coach-review-panel__chat {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.assistant-panel__message,
+.coach-review-panel__message {
+  background: #101820;
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.assistant-panel__message--user,
+.coach-review-panel__message--user {
+  background: #243447;
+}
+
+.assistant-panel__composer,
+.coach-review-panel__composer,
+.action-bar__assistant {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.assistant-panel__composer input,
+.coach-review-panel__composer input,
+.action-bar__assistant input {
+  flex: 1;
+  min-width: 0;
+}

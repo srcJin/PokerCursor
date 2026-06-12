@@ -121,3 +121,19 @@ export interface HandReport {
   decisionReviews: string[];
   thinkingProcess: string[];
 }
+
+export type PlayerAction = 'fold' | 'check' | 'call' | 'raise';
+
+export interface AgentProfile {
+  stackSize: number;
+  aggression: number;
+  lossAversion: number;
+  bluffIndex: number;
+  position: 'early' | 'middle' | 'late' | 'blinds';
+  recentHistory: string;
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}

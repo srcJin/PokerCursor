@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { ActionBar } from './components/ActionBar';
 import { AgentInsights } from './components/AgentInsights';
+import { AssistantPanel } from './components/AssistantPanel';
 import { CoachPanel } from './components/CoachPanel';
+import { CoachReviewPanel } from './components/CoachReviewPanel';
 import { HandSummary } from './components/HandSummary';
 import { PerformanceDashboard } from './components/PerformanceDashboard';
 import { PokerTable } from './components/PokerTable';
@@ -20,8 +22,14 @@ function App() {
     coachAdvice,
     coachFeedback,
     handReport,
+    assistantHistory,
+    coachHistory,
+    clockWarning,
     startGame,
     askCoach,
+    askAssistant,
+    askCoachReview,
+    coachChat,
     humanAction,
     nextHand,
   } = useGame();
@@ -68,7 +76,8 @@ function App() {
               <li><strong>Dealer Agent</strong> — rotates button, deals cards</li>
               <li><strong>Ace (Aggro)</strong> — loose-aggressive strategy</li>
               <li><strong>Rock (Tight)</strong> — tight-passive strategy</li>
-              <li><strong>Coach Agent</strong> — explains options &amp; feedback</li>
+              <li><strong>Assistant</strong> — in-hand pot odds and equity help</li>
+              <li><strong>Pro Coach</strong> — post-hand street review</li>
               <li><strong>Report Agent</strong> — hand summary after each pot</li>
             </ul>
             <button type="button" className="btn btn--primary" onClick={startGame} disabled={isThinking}>
@@ -87,6 +96,7 @@ function App() {
                 view={view}
                 onAction={humanAction}
                 onAskCoach={askCoach}
+                onAskAssistant={askAssistant}
                 disabled={isThinking}
               />
             )}
@@ -105,7 +115,20 @@ function App() {
 
         {activeView === 'table' && (
           <div className="side-rail">
+            <AssistantPanel
+              history={assistantHistory}
+              onAsk={askAssistant}
+              disabled={isThinking || !view?.humanToAct}
+              clockWarning={clockWarning}
+            />
             <CoachPanel advice={coachAdvice} feedback={coachFeedback} />
+            <CoachReviewPanel
+              view={view}
+              history={coachHistory}
+              onReview={askCoachReview}
+              onChat={coachChat}
+              disabled={isThinking}
+            />
             <PerformanceDashboard records={playerRecords} />
             <AgentInsights memories={agentMemories} traces={decisionTraces} />
           </div>
