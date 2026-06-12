@@ -129,8 +129,13 @@ function App() {
               onChat={coachChat}
               disabled={isThinking}
             />
-            <PerformanceDashboard records={playerRecords} />
             <AgentInsights memories={agentMemories} traces={decisionTraces} />
+          </div>
+        )}
+
+        {activeView === 'table' && (
+          <div className="bottom-rail">
+            <PerformanceDashboard records={playerRecords} />
           </div>
         )}
       </main>

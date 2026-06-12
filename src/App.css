@@ -70,8 +70,13 @@
   min-width: 0;
 }
 
+.bottom-rail {
+  grid-column: 1;
+}
+
 .side-rail {
   grid-column: 2;
+  grid-row: 1 / span 2;
   display: grid;
   align-content: start;
   gap: 1rem;
@@ -94,6 +99,7 @@
   }
 
   .side-rail {
+    grid-row: auto;
     position: static;
     max-height: none;
     overflow-y: visible;
