@@ -1,12 +1,17 @@
 import type { Action } from '../types/poker';
 import PokerTable from './pokerTable';
 
-import { pickAIAction } from '../agents/aiPlayer';
+import { pickAIAction, type AIDecisionResult } from '../agents/aiPlayer';
 import { endHand, startNewHand } from '../agents/dealer';
+import { AgentMemoryManager } from '../agents/memory';
 import { buildHandReport } from '../agents/report';
 import type {
   ActionLogEntry,
+  AgentDecisionTrace,
+  AgentId,
+  AgentMemorySnapshot,
   HandReport,
+  PlayerRecord,
   SeatView,
   Street,
   TableView,
@@ -15,6 +20,8 @@ import type {
 import { cardsToShort } from './cards';
 import {
   ACTIVE_SEATS,
+  AI_AGGRESSIVE_SEAT,
+  AI_CONSERVATIVE_SEAT,
   HAND_RANKING_NAMES,
   HUMAN_SEAT,
   SEAT_CONFIG,
@@ -27,18 +34,31 @@ export type AdvanceResult =
   | 'hand_complete'
   | 'waiting';
 
+export type AIDecisionProvider = (
+  seat: number,
+  view: TableView,
+  memory: AgentMemorySnapshot,
+  fallback: AIDecisionResult,
+) => Promise<AIDecisionResult>;
+
 import type { PokerTableInstance } from './pokerTable';
 
 export class GameSession {
   private table: PokerTableInstance;
   private actionLog: ActionLogEntry[] = [];
+  private decisionTraces: AgentDecisionTrace[] = [];
   private lastHandReport: HandReport | null = null;
   private completedHandView: TableView | null = null;
+  private memory = new AgentMemoryManager();
+  private records = new Map<number, PlayerRecord>();
 
-  constructor() {
+  constructor(savedRecords: PlayerRecord[] = []) {
     this.table = new PokerTable({ smallBlind: 1, bigBlind: 2 }, TABLE_SEATS);
     for (const seat of ACTIVE_SEATS) {
-      this.table.sitDown(seat, STARTING_STACK);
+      const saved = savedRecords.find((record) => record.seat === seat);
+      const credits = saved && saved.credits > 0 ? saved.credits : STARTING_STACK;
+      this.table.sitDown(seat, credits);
+      this.records.set(seat, this.createPlayerRecord(seat, credits, saved));
     }
   }
 
@@ -50,11 +70,34 @@ export class GameSession {
     return this.lastHandReport;
   }
 
+  getAgentMemories(): AgentMemorySnapshot[] {
+    return this.memory.getAllSnapshots();
+  }
+
+  getDecisionTraces(): AgentDecisionTrace[] {
+    return [...this.decisionTraces];
+  }
+
+  getPlayerRecords(): PlayerRecord[] {
+    return Array.from(this.records.values()).map((record) => ({
+      ...record,
+      recentResults: [...record.recentResults],
+    }));
+  }
+
   startHand(): void {
     this.actionLog = [];
+    this.decisionTraces = [];
     this.lastHandReport = null;
     this.completedHandView = null;
+    this.memory.resetHand();
     startNewHand(this.table);
+    this.recordAgentTrace(
+      'dealer',
+      undefined,
+      'Started a new hand using only public table state.',
+      this.getScopedView('dealer'),
+    );
   }
 
   getView(revealAllCards = false): TableView {
@@ -129,7 +172,22 @@ export class GameSession {
     };
   }
 
-  act(seat: number, action: Action, betSize?: number): void {
+  recordCoachAdvice(summary: string): void {
+    this.recordAgentTrace(
+      'coach',
+      HUMAN_SEAT,
+      `Built advice from the human cards and public board: ${summary}`,
+      this.getScopedView('coach'),
+    );
+  }
+
+  act(
+    seat: number,
+    action: Action,
+    betSize?: number,
+    rationale?: string,
+    thinkingProcess?: string[],
+  ): void {
     const street = this.table.roundOfBetting() as Street;
     const label = SEAT_CONFIG[seat]?.label ?? `Seat ${seat + 1}`;
 
@@ -140,12 +198,16 @@ export class GameSession {
       betSize,
       street,
       timestamp: Date.now(),
+      rationale,
+      thinkingProcess: thinkingProcess ?? (rationale ? [rationale] : undefined),
     });
 
     this.table.actionTaken(action, betSize);
   }
 
-  advanceUntilHumanOrComplete(): AdvanceResult {
+  async advanceUntilHumanOrComplete(
+    decideAI?: AIDecisionProvider,
+  ): Promise<AdvanceResult> {
     while (this.table.isHandInProgress()) {
       while (this.table.isBettingRoundInProgress()) {
         const seat = this.table.playerToAct();
@@ -153,8 +215,21 @@ export class GameSession {
           return 'human_turn';
         }
 
-        const decision = pickAIAction(seat, this.table);
-        this.act(seat, decision.action, decision.betSize);
+        const view = this.getScopedView(this.agentIdForSeat(seat), seat);
+        const memory = this.memory.getSnapshot(this.agentIdForSeat(seat));
+        const fallback = pickAIAction(seat, view, memory);
+        const { decision, trace } = decideAI
+          ? await decideAI(seat, view, memory, fallback)
+          : fallback;
+      this.decisionTraces.push(trace);
+      this.memory.recordDecision(trace);
+      this.act(
+        seat,
+        decision.action,
+        decision.betSize,
+        decision.rationale,
+        decision.thinkingProcess,
+      );
       }
 
       this.table.endBettingRound();
@@ -178,16 +253,30 @@ export class GameSession {
     if (runShowdown) {
       endHand(this.table);
     }
-    snapshot.winners = this.getWinners();
+    this.applyCurrentStacks(snapshot);
+    const winners = this.getWinners();
+    snapshot.winners = winners;
     snapshot.handInProgress = false;
     snapshot.humanToAct = false;
     snapshot.legalActions = [];
     this.completedHandView = snapshot;
+    this.updateRecords(winners);
+    this.recordAgentTrace(
+      'report',
+      undefined,
+      'Prepared to review complete history, all revealed cards, and every stored decision trace.',
+      snapshot,
+    );
   }
 
   finalizeHandReport(): HandReport {
     const view = this.getView(true);
-    this.lastHandReport = buildHandReport(this.actionLog, view);
+    this.lastHandReport = buildHandReport(
+      this.actionLog,
+      view,
+      this.decisionTraces,
+      this.getPlayerRecords(),
+    );
     return this.lastHandReport;
   }
 
@@ -275,5 +364,141 @@ export class GameSession {
       }
     }
     return result;
+  }
+
+  private getScopedView(agentId: AgentId, revealSeat?: number): TableView {
+    const reveal =
+      agentId === 'coach'
+        ? HUMAN_SEAT
+        : agentId === 'ai_aggressive' || agentId === 'ai_conservative'
+          ? revealSeat
+          : undefined;
+
+    return this.buildViewForSeat(reveal);
+  }
+
+  private buildViewForSeat(revealSeat?: number): TableView {
+    if (!this.table.isHandInProgress() && this.completedHandView) {
+      return {
+        ...this.completedHandView,
+        seats: this.completedHandView.seats.map((seat) => ({
+          ...seat,
+          holeCards: seat.seat === revealSeat ? seat.holeCards : seat.holeCards ? ['back', 'back'] : null,
+        })),
+      };
+    }
+
+    const view = this.getView(false);
+    return {
+      ...view,
+      seats: view.seats.map((seat) => {
+        if (!seat.holeCards || seat.seat === revealSeat) {
+          return seat;
+        }
+        return { ...seat, holeCards: ['back', 'back'] };
+      }),
+    };
+  }
+
+  private recordAgentTrace(
+    agentId: AgentId,
+    seat: number | undefined,
+    rationale: string,
+    view: TableView,
+  ): void {
+    const memory = this.memory.getSnapshot(agentId);
+    const visibleCards = view.seats.flatMap((item) =>
+      item.holeCards?.filter((card) => card !== 'back') ?? [],
+    );
+    const trace: AgentDecisionTrace = {
+      id: `${agentId}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      agentId,
+      label: memory.label,
+      seat,
+      street: view.street,
+      observation: [
+        `Board: ${view.communityCards.length ? view.communityCards.join(' ') : 'none'}`,
+        `Public pot total: $${view.pots.reduce((sum, pot) => sum + pot.size, 0)}`,
+      ],
+      shortTerm: memory.shortTerm,
+      rationale,
+      thinkingProcess: [
+        'Collected the role-scoped visible state.',
+        'Applied the agent responsibility and memory profile.',
+        'Recorded a public reasoning summary for the demo trace.',
+      ],
+      visibleCards: [...visibleCards, ...view.communityCards],
+      timestamp: Date.now(),
+    };
+
+    this.decisionTraces.push(trace);
+    this.memory.recordDecision(trace);
+  }
+
+  private agentIdForSeat(seat: number): AgentId {
+    if (seat === AI_AGGRESSIVE_SEAT) return 'ai_aggressive';
+    if (seat === AI_CONSERVATIVE_SEAT) return 'ai_conservative';
+    return 'dealer';
+  }
+
+  private createPlayerRecord(
+    seat: number,
+    credits: number,
+    saved?: PlayerRecord,
+  ): PlayerRecord {
+    const config = SEAT_CONFIG[seat];
+    return {
+      seat,
+      label: config?.label ?? `Seat ${seat + 1}`,
+      role: config?.role ?? 'human',
+      startingCredit: saved?.startingCredit ?? STARTING_STACK,
+      credits,
+      handsPlayed: saved?.handsPlayed ?? 0,
+      wins: saved?.wins ?? 0,
+      voluntaryActions: saved?.voluntaryActions ?? 0,
+      aggressiveActions: saved?.aggressiveActions ?? 0,
+      folds: saved?.folds ?? 0,
+      net: credits - (saved?.startingCredit ?? STARTING_STACK),
+      recentResults: saved?.recentResults ? [...saved.recentResults] : [],
+    };
+  }
+
+  private applyCurrentStacks(view: TableView): void {
+    const seats = this.table.seats();
+    view.seats = view.seats.map((seat) => ({
+      ...seat,
+      stack: seats[seat.seat]?.stack ?? seat.stack,
+    }));
+  }
+
+  private updateRecords(winners: WinnerView[] | null): void {
+    const winnerSeats = new Set((winners ?? []).map((winner) => winner.seat));
+    const seats = this.table.seats();
+
+    for (const seat of ACTIVE_SEATS) {
+      const record = this.records.get(seat);
+      if (!record) continue;
+
+      const previousCredits = record.credits;
+      const credits = seats[seat]?.stack ?? previousCredits;
+      const actions = this.actionLog.filter((entry) => entry.seat === seat);
+      const aggressiveActions = actions.filter(
+        (entry) => entry.action === 'bet' || entry.action === 'raise',
+      ).length;
+      const folds = actions.filter((entry) => entry.action === 'fold').length;
+      const voluntaryActions = actions.filter((entry) => entry.action !== 'check').length;
+
+      this.records.set(seat, {
+        ...record,
+        credits,
+        handsPlayed: record.handsPlayed + 1,
+        wins: record.wins + (winnerSeats.has(seat) ? 1 : 0),
+        voluntaryActions: record.voluntaryActions + voluntaryActions,
+        aggressiveActions: record.aggressiveActions + aggressiveActions,
+        folds: record.folds + folds,
+        net: credits - record.startingCredit,
+        recentResults: [...record.recentResults, credits - previousCredits].slice(-12),
+      });
+    }
   }
 }

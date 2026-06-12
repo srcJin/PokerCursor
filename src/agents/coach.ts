@@ -96,7 +96,18 @@ export function getCoachAdvice(view: TableView): CoachAdvice {
   }
   summary += ` Legal actions: ${view.legalActions.join(', ')}.`;
 
-  return { summary, options, equity };
+  return {
+    summary,
+    options,
+    equity,
+    thinkingProcess: [
+      'Read only the human hand, legal actions, visible board, public pots, and public stacks.',
+      equity
+        ? `Used the local equity estimate (${equity}) as one input.`
+        : 'Skipped equity because the required visible card inputs were incomplete.',
+      'Mapped each legal action to a learning-oriented recommendation.',
+    ],
+  };
 }
 
 /** Immediate feedback after the player acts. */

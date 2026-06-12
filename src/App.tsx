@@ -1,14 +1,22 @@
+import { useState } from 'react';
 import { ActionBar } from './components/ActionBar';
+import { AgentInsights } from './components/AgentInsights';
 import { CoachPanel } from './components/CoachPanel';
 import { HandSummary } from './components/HandSummary';
+import { PerformanceDashboard } from './components/PerformanceDashboard';
 import { PokerTable } from './components/PokerTable';
 import { useGame } from './hooks/useGame';
 import './App.css';
 
 function App() {
+  const [activeView, setActiveView] = useState<'table' | 'data'>('table');
   const {
     phase,
     view,
+    agentMemories,
+    decisionTraces,
+    playerRecords,
+    isThinking,
     coachAdvice,
     coachFeedback,
     handReport,
@@ -22,16 +30,39 @@ function App() {
     <div className="app">
       <header className="app__header">
         <h1>Poker Coach</h1>
-        <p>Learn Texas Hold&apos;em — 1 human vs 2 AI agents</p>
+        <p>Learn Texas Hold&apos;em with scoped LLM agents, memory, and persistent credits</p>
+        <nav className="app__tabs" aria-label="Demo views">
+          <button
+            type="button"
+            className={activeView === 'table' ? 'app__tab app__tab--active' : 'app__tab'}
+            onClick={() => setActiveView('table')}
+          >
+            Table
+          </button>
+          <button
+            type="button"
+            className={activeView === 'data' ? 'app__tab app__tab--active' : 'app__tab'}
+            onClick={() => setActiveView('data')}
+          >
+            Data
+          </button>
+        </nav>
       </header>
 
       <main className="app__main">
-        {phase === 'lobby' && (
+        {activeView === 'data' && (
+          <div className="app__wide">
+            <PerformanceDashboard records={playerRecords} />
+            <AgentInsights memories={agentMemories} traces={decisionTraces} />
+          </div>
+        )}
+
+        {activeView === 'table' && phase === 'lobby' && (
           <div className="lobby">
             <h2>Ready to play?</h2>
             <p>
-              You&apos;ll face two AI opponents with different styles. Use the Coach
-              when you need help deciding.
+              You&apos;ll face two AI opponents with different styles. Each agent
+              receives only its scoped table view and keeps managed memory.
             </p>
             <ul className="lobby__agents">
               <li><strong>Dealer Agent</strong> — rotates button, deals cards</li>
@@ -40,14 +71,15 @@ function App() {
               <li><strong>Coach Agent</strong> — explains options &amp; feedback</li>
               <li><strong>Report Agent</strong> — hand summary after each pot</li>
             </ul>
-            <button type="button" className="btn btn--primary" onClick={startGame}>
-              Start Game
+            <button type="button" className="btn btn--primary" onClick={startGame} disabled={isThinking}>
+              {isThinking ? 'Starting...' : 'Start Game'}
             </button>
           </div>
         )}
 
-        {view && phase !== 'lobby' && (
+        {activeView === 'table' && view && phase !== 'lobby' && (
           <>
+            {isThinking && <div className="thinking-banner">Agents are thinking...</div>}
             <PokerTable view={view} />
 
             {phase === 'playing' && (
@@ -55,6 +87,7 @@ function App() {
                 view={view}
                 onAction={humanAction}
                 onAskCoach={askCoach}
+                disabled={isThinking}
               />
             )}
 
@@ -70,7 +103,13 @@ function App() {
           </>
         )}
 
-        <CoachPanel advice={coachAdvice} feedback={coachFeedback} />
+        {activeView === 'table' && (
+          <div className="side-rail">
+            <CoachPanel advice={coachAdvice} feedback={coachFeedback} />
+            <PerformanceDashboard records={playerRecords} />
+            <AgentInsights memories={agentMemories} traces={decisionTraces} />
+          </div>
+        )}
       </main>
     </div>
   );

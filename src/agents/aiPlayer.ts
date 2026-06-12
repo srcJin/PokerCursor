@@ -1,15 +1,22 @@
 import type { Action } from '../types/poker';
-import type { PokerTableInstance } from '../game/pokerTable';
-import { cardsToShort } from '../game/cards';
 import {
   AI_AGGRESSIVE_SEAT,
   AI_CONSERVATIVE_SEAT,
   HUMAN_SEAT,
 } from '../game/constants';
+import type { AgentDecisionTrace, AgentMemorySnapshot, TableView } from '../types/game';
 
 export interface AIDecision {
   action: Action;
   betSize?: number;
+  rationale: string;
+  thinkingProcess: string[];
+  observation: string[];
+}
+
+export interface AIDecisionResult {
+  decision: AIDecision;
+  trace: AgentDecisionTrace;
 }
 
 type Position = 'button' | 'small_blind' | 'big_blind';
@@ -42,14 +49,61 @@ function handStrength(holeCards: string[]): number {
   return score;
 }
 
+export function summarizeObservation(view: TableView, seat: number, cards: string[]): string[] {
+  const pot = view.pots.reduce((sum, p) => sum + p.size, 0);
+  const board = view.communityCards.length ? view.communityCards.join(' ') : 'none';
+  const player = view.seats.find((item) => item.seat === seat);
+  const facing = view.legalActions.includes('call') ? 'facing a bet' : 'not facing a bet';
+
+  return [
+    `Hole cards: ${cards.join(' ') || 'unknown'}`,
+    `Board: ${board}`,
+    `Pot: $${pot}; stack: $${player?.stack ?? 0}; ${facing}`,
+    `Legal actions: ${view.legalActions.join(', ')}`,
+  ];
+}
+
+export function buildAIDecisionTrace(
+  decision: AIDecision,
+  seat: number,
+  view: TableView,
+  memory: AgentMemorySnapshot,
+  cards: string[],
+): AgentDecisionTrace {
+  const visibleCards = [
+    ...cards,
+    ...view.communityCards,
+  ];
+
+  return {
+    id: `${memory.agentId}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    agentId: memory.agentId,
+    label: memory.label,
+    seat,
+    street: view.street,
+    action: decision.action,
+    betSize: decision.betSize,
+    observation: decision.observation,
+    shortTerm: memory.shortTerm,
+    rationale: decision.rationale,
+    thinkingProcess: decision.thinkingProcess,
+    visibleCards,
+    timestamp: Date.now(),
+  };
+}
+
 /** AI player agent with configurable aggression and loss aversion. */
-export function pickAIAction(seat: number, table: PokerTableInstance): AIDecision {
-  const legal = table.legalActions();
-  const { actions, chipRange } = legal;
-  const hole = table.holeCards()[seat];
-  const cards = hole ? cardsToShort(hole) : [];
-  const stack = table.seats()[seat]?.stack ?? 0;
-  const position = getPosition(seat, table.button(), [
+export function pickAIAction(
+  seat: number,
+  view: TableView,
+  memory: AgentMemorySnapshot,
+): AIDecisionResult {
+  const { legalActions: actions, chipRange } = view;
+  const player = view.seats.find((item) => item.seat === seat);
+  const cards = player?.holeCards?.filter((card) => card !== 'back') ?? [];
+  const stack = player?.stack ?? 0;
+  const button = view.seats.find((item) => item.isButton)?.seat ?? HUMAN_SEAT;
+  const position = getPosition(seat, button, [
     HUMAN_SEAT,
     AI_AGGRESSIVE_SEAT,
     AI_CONSERVATIVE_SEAT,
@@ -65,6 +119,7 @@ export function pickAIAction(seat: number, table: PokerTableInstance): AIDecisio
 
   const canRaise = actions.includes('raise') || actions.includes('bet');
   const raiseThreshold = isAggressive ? 22 : 30;
+  const observation = summarizeObservation(view, seat, cards);
 
   if (canRaise && score >= raiseThreshold && Math.random() < aggression) {
     const min = chipRange?.min ?? 4;
@@ -72,27 +127,84 @@ export function pickAIAction(seat: number, table: PokerTableInstance): AIDecisio
       chipRange?.max ?? min,
       min + (isAggressive ? 6 : 2),
     );
-    return {
+    const decision: AIDecision = {
       action: actions.includes('raise') ? 'raise' : 'bet',
       betSize: raiseSize,
+      observation,
+      rationale: `${memory.label} rates private hand strength ${score} with ${position} position and chooses pressure.`,
+      thinkingProcess: [
+        `Scoped cards produce a hand-strength score of ${score}.`,
+        `${position} position adds pressure value.`,
+        `${memory.label}'s long-term style favors aggression when the raise threshold is met.`,
+      ],
     };
+    return { decision, trace: buildAIDecisionTrace(decision, seat, view, memory, cards) };
   }
 
   if (actions.includes('check')) {
-    return { action: 'check' };
+    const decision = {
+      action: 'check' as const,
+      observation,
+      rationale: `${memory.label} keeps the pot controlled because no call is required.`,
+      thinkingProcess: [
+        'No chips are required to continue.',
+        'Checking preserves stack and keeps options open for the next street.',
+      ],
+    };
+    return { decision, trace: buildAIDecisionTrace(decision, seat, view, memory, cards) };
   }
 
   if (actions.includes('call')) {
     const callCost = chipRange?.min ?? 2;
     if (score < 14 && callCost > stack * 0.2 * lossAversion) {
-      if (actions.includes('fold')) return { action: 'fold' };
+      if (actions.includes('fold')) {
+        const decision = {
+          action: 'fold' as const,
+          observation,
+          rationale: `${memory.label} folds weak private cards because the call cost is too high for its risk profile.`,
+          thinkingProcess: [
+            `Hand-strength score ${score} is below the continue threshold.`,
+            `Call cost $${callCost} is too expensive for this memory profile.`,
+            'Folding preserves long-term credit.',
+          ],
+        };
+        return { decision, trace: buildAIDecisionTrace(decision, seat, view, memory, cards) };
+      }
     }
-    return { action: 'call' };
+    const decision = {
+      action: 'call' as const,
+      observation,
+      rationale: `${memory.label} continues because hand score ${score} can still realize equity at this price.`,
+      thinkingProcess: [
+        `Hand-strength score ${score} is playable at the current price.`,
+        `Call cost $${callCost} is acceptable against stack $${stack}.`,
+        'Calling keeps the hand alive without escalating the pot.',
+      ],
+    };
+    return { decision, trace: buildAIDecisionTrace(decision, seat, view, memory, cards) };
   }
 
   if (actions.includes('fold')) {
-    return { action: 'fold' };
+    const decision = {
+      action: 'fold' as const,
+      observation,
+      rationale: `${memory.label} has no profitable continuing action in its scoped view.`,
+      thinkingProcess: [
+        'The scoped view does not support check, call, bet, or raise.',
+        'Folding is the only low-risk legal action.',
+      ],
+    };
+    return { decision, trace: buildAIDecisionTrace(decision, seat, view, memory, cards) };
   }
 
-  return { action: actions[0] };
+  const decision = {
+    action: actions[0],
+    observation,
+    rationale: `${memory.label} takes the first legal fallback action from its scoped view.`,
+    thinkingProcess: [
+      'No preferred strategic branch matched.',
+      `Using legal fallback action ${actions[0]}.`,
+    ],
+  };
+  return { decision, trace: buildAIDecisionTrace(decision, seat, view, memory, cards) };
 }

@@ -28,6 +28,34 @@ export function HandSummary({ report, onNextHand }: HandSummaryProps) {
           </ul>
         </div>
       </div>
+
+      <div className="hand-summary__review">
+        <h4>Full Action Timeline</h4>
+        <ol>
+          {report.timeline.map((item, index) => (
+            <li key={`${index}-${item}`}>{item}</li>
+          ))}
+        </ol>
+      </div>
+
+      <div className="hand-summary__review">
+        <h4>Agent Decision Review</h4>
+        <ul>
+          {report.decisionReviews.map((item, index) => (
+            <li key={`${index}-${item}`}>{item}</li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="hand-summary__review">
+        <h4>Report Agent Reasoning</h4>
+        <ol>
+          {report.thinkingProcess.map((item, index) => (
+            <li key={`${index}-${item}`}>{item}</li>
+          ))}
+        </ol>
+      </div>
+
       <button type="button" className="btn btn--primary" onClick={onNextHand}>
         Next Hand
       </button>

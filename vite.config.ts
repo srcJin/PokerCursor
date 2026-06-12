@@ -27,6 +27,11 @@ function pokerTsBrowserFix(): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig({
+  server: {
+    proxy: {
+      '/api': 'http://localhost:8787',
+    },
+  },
   plugins: [
     react(),
     pokerTsBrowserFix(),

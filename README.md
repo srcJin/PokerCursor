@@ -32,12 +32,25 @@ Agent-driven Texas Hold'em learning prototype for hackathons.
 
 ```bash
 npm install
+npm run dev:api
 npm run dev
 npm run build
 ```
 
+`npm run dev:api` starts the local backend on `127.0.0.1:8787` for LLM calls.
+`npm run dev` starts Vite and proxies `/api` requests to that backend.
+
+## LLM setup
+
+Use `.env.example` as the committed template and put local values in `.env`.
+Set `OPENAI_API_KEY` before running `npm run dev:api`.
+Optionally override `OPENAI_MODEL`; the default is `gpt-5-mini`.
+When the key is missing or an API call fails, the app falls back to deterministic local
+agent logic so the demo remains playable.
+Agent traces record public reasoning summaries returned by the model; raw hidden
+chain-of-thought is not requested or displayed.
+
 ## Next steps (hackathon)
 
-- Wire Coach/Report to an LLM API for richer explanations
 - Add action history replay UI
 - Tune AI aggression parameters in `aiPlayer.ts`

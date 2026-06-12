@@ -30,6 +30,16 @@ export function CoachPanel({ advice, feedback }: CoachPanelProps) {
           {advice.equity && (
             <p className="coach-panel__equity">Equity: {advice.equity}</p>
           )}
+          {advice.thinkingProcess.length > 0 && (
+            <div className="coach-panel__thinking">
+              <span className="coach-panel__label">Visible reasoning</span>
+              <ol>
+                {advice.thinkingProcess.map((step, index) => (
+                  <li key={`${index}-${step}`}>{step}</li>
+                ))}
+              </ol>
+            </div>
+          )}
           <ul className="coach-panel__options">
             {advice.options.map((opt) => (
               <li key={opt.action}>
